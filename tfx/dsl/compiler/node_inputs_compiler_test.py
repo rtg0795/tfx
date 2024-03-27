@@ -343,7 +343,7 @@ class NodeInputsCompilerTest(tf.test.TestCase, parameterized.TestCase):
                     index_op {
                       expression {
                         placeholder {
-                          key: "%s"
+                          key: "CondNode_x"
                         }
                       }
                     }
@@ -354,7 +354,7 @@ class NodeInputsCompilerTest(tf.test.TestCase, parameterized.TestCase):
           }
         }
       }
-    """ % cond_input_key, cond.placeholder_expression)
+    """, cond.placeholder_expression)
 
   def testCompileInputsForDynamicProperties(self):
     producer = DummyNode('Producer')

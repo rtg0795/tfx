@@ -18,14 +18,16 @@ from typing import Type, TypeVar
 
 from absl.testing import parameterized
 import tensorflow as tf
+from tfx.dsl.components.base.testing import test_node
 from tfx.dsl.placeholder import placeholder as ph
 from tfx.proto.orchestration import placeholder_pb2
+from tfx.types import channel
 from tfx.types import channel_utils
 from tfx.types import standard_artifacts
 from tfx.types.artifact import Artifact
 from tfx.types.artifact import Property
 from tfx.types.artifact import PropertyType
-from tfx.types.channel import Channel
+
 from google.protobuf import message
 from google.protobuf import text_format
 
@@ -53,9 +55,13 @@ class _MyType(Artifact):
 class ChannelWrappedPlaceholderTest(parameterized.TestCase, tf.test.TestCase):
 
   def testProtoFutureValueOperator(self):
-    output_channel = Channel(type=standard_artifacts.Integer)
+    output_channel = channel.OutputChannel(
+        artifact_type=standard_artifacts.Integer,
+        producer_component=test_node.TestNode('producer'),
+        output_key='num',
+    )
     placeholder = output_channel.future()[0].value
-    channel_to_key = {output_channel: '_component.num'}
+    channel_to_key = {output_channel: 'producer_num'}
     self.assertProtoEquals(
         channel_utils.encode_placeholder_with_channels(
             placeholder, lambda k: channel_to_key[k]
@@ -66,30 +72,82 @@ class ChannelWrappedPlaceholderTest(parameterized.TestCase, tf.test.TestCase):
   @parameterized.named_parameters(
       {
           'testcase_name': 'two_sides_placeholder',
-          'left': Channel(type=_MyType).future().value,
-          'right': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('left'),
+                  output_key='l',
+              )
+              .future()
+              .value
+          ),
+          'right': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('right'),
+                  output_key='r',
+              )
+              .future()
+              .value
+          ),
       },
       {
           'testcase_name': 'left_side_placeholder_right_side_string',
-          'left': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('left'),
+                  output_key='l',
+              )
+              .future()
+              .value
+          ),
           'right': '#',
       },
       {
           'testcase_name': 'left_side_string_right_side_placeholder',
           'left': 'http://',
-          'right': Channel(type=_MyType).future().value,
+          'right': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('right'),
+                  output_key='r',
+              )
+              .future()
+              .value
+          ),
       },
   )
   def testConcat(self, left, right):
     self.assertIsInstance(left + right, ph.Placeholder)
 
   def testJoinWithSelf(self):
-    left = Channel(type=_MyType).future().value
-    right = Channel(type=_MyType).future().value
+    left = (
+        channel.OutputChannel(
+            artifact_type=_MyType,
+            producer_component=test_node.TestNode('producer'),
+            output_key='foo',
+        )
+        .future()
+        .value
+    )
+    right = (
+        channel.OutputChannel(
+            artifact_type=_MyType,
+            producer_component=test_node.TestNode('producer'),
+            output_key='foo',
+        )
+        .future()
+        .value
+    )
     self.assertIsInstance(ph.join([left, right]), ph.Placeholder)
 
   def testEncodeWithKeys(self):
-    my_channel = Channel(type=_MyType)
+    my_channel = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('producer'),
+        output_key='foo',
+    )
     channel_future = my_channel.future()[0].value
     actual_pb = channel_utils.encode_placeholder_with_channels(
         channel_future, lambda c: c.type_name
@@ -103,7 +161,7 @@ class ChannelWrappedPlaceholderTest(parameterized.TestCase, tf.test.TestCase):
               index_op {
                 expression {
                   placeholder {
-                    key: "MyTypeName"
+                    key: "producer_foo"
                   }
                 }
               }
@@ -111,7 +169,9 @@ class ChannelWrappedPlaceholderTest(parameterized.TestCase, tf.test.TestCase):
           }
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
 
@@ -120,15 +180,39 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
   @parameterized.named_parameters(
       {
           'testcase_name': 'two_sides_placeholder',
-          'left': Channel(type=_MyType).future().value,
-          'right': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
+          'right': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
           'expected_op': placeholder_pb2.ComparisonOperator.Operation.LESS_THAN,
           'expected_lhs_field': 'operator',
           'expected_rhs_field': 'operator',
       },
       {
           'testcase_name': 'left_side_placeholder_right_side_int',
-          'left': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
           'right': 1,
           'expected_op': placeholder_pb2.ComparisonOperator.Operation.LESS_THAN,
           'expected_lhs_field': 'operator',
@@ -137,7 +221,15 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
       },
       {
           'testcase_name': 'left_side_placeholder_right_side_float',
-          'left': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
           'right': 1.1,
           'expected_op': placeholder_pb2.ComparisonOperator.Operation.LESS_THAN,
           'expected_lhs_field': 'operator',
@@ -146,7 +238,15 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
       },
       {
           'testcase_name': 'left_side_placeholder_right_side_string',
-          'left': Channel(type=_MyType).future().value,
+          'left': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
           'right': 'one',
           'expected_op': placeholder_pb2.ComparisonOperator.Operation.LESS_THAN,
           'expected_lhs_field': 'operator',
@@ -154,36 +254,42 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           'expected_rhs_value_type': 'string_value',
       },
       {
-          'testcase_name':
-              'right_side_placeholder_left_side_int',
-          'left':
-              1,
-          'right':
-              Channel(type=_MyType).future().value,
-          'expected_op':
-              placeholder_pb2.ComparisonOperator.Operation.GREATER_THAN,
-          'expected_lhs_field':
-              'operator',
-          'expected_rhs_field':
-              'value',
-          'expected_rhs_value_type':
-              'int_value',
+          'testcase_name': 'right_side_placeholder_left_side_int',
+          'left': 1,
+          'right': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
+          'expected_op': (
+              placeholder_pb2.ComparisonOperator.Operation.GREATER_THAN
+          ),
+          'expected_lhs_field': 'operator',
+          'expected_rhs_field': 'value',
+          'expected_rhs_value_type': 'int_value',
       },
       {
-          'testcase_name':
-              'right_side_placeholder_left_side_float',
-          'left':
-              1.1,
-          'right':
-              Channel(type=_MyType).future().value,
-          'expected_op':
-              placeholder_pb2.ComparisonOperator.Operation.GREATER_THAN,
-          'expected_lhs_field':
-              'operator',
-          'expected_rhs_field':
-              'value',
-          'expected_rhs_value_type':
-              'double_value',
+          'testcase_name': 'right_side_placeholder_left_side_float',
+          'left': 1.1,
+          'right': (
+              channel.OutputChannel(
+                  artifact_type=_MyType,
+                  producer_component=test_node.TestNode('producer'),
+                  output_key='foo',
+              )
+              .future()
+              .value
+          ),
+          'expected_op': (
+              placeholder_pb2.ComparisonOperator.Operation.GREATER_THAN
+          ),
+          'expected_lhs_field': 'operator',
+          'expected_rhs_field': 'value',
+          'expected_rhs_value_type': 'double_value',
       },
   )
   def testComparison(self,
@@ -206,16 +312,32 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
               expected_rhs_value_type))
 
   def testEquals(self):
-    left = Channel(type=_MyType)
-    right = Channel(type=_MyType)
+    left = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('producer'),
+        output_key='foo',
+    )
+    right = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('producer'),
+        output_key='foo',
+    )
     pred = left.future().value == right.future().value
     actual_pb = pred.encode()
     self.assertEqual(actual_pb.operator.compare_op.op,
                      placeholder_pb2.ComparisonOperator.Operation.EQUAL)
 
   def testEncode(self):
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value > channel_2.future().value
     actual_pb = pred.encode()
     expected_pb = text_format.Parse(
@@ -229,7 +351,9 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                   operator {
                     index_op {
                       expression {
-                        placeholder {}
+                        placeholder {
+                            key: "a_foo"
+                        }
                       }
                     }
                   }
@@ -244,7 +368,9 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                   operator {
                     index_op {
                       expression {
-                        placeholder {}
+                        placeholder {
+                            key: "b_bar"
+                        }
                       }
                     }
                   }
@@ -255,12 +381,22 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: GREATER_THAN
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testEncodeWithKeys(self):
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value > channel_2.future().value
     channel_to_key_map = {
         channel_1: 'channel_1_key',
@@ -281,7 +417,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                     index_op {
                       expression {
                         placeholder {
-                          key: "channel_1_key"
+                          key: "a_foo"
                         }
                       }
                     }
@@ -298,7 +434,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                     index_op {
                       expression {
                         placeholder {
-                          key: "channel_2_key"
+                          key: "b_bar"
                         }
                       }
                     }
@@ -310,12 +446,22 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: GREATER_THAN
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testNegation(self):
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value < channel_2.future().value
     not_pred = ph.logical_not(pred)
     channel_to_key_map = {
@@ -340,7 +486,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_1_key"
+                                key: "a_foo"
                               }
                             }
                           }
@@ -357,7 +503,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_2_key"
+                                key: "b_bar"
                               }
                             }
                           }
@@ -373,13 +519,23 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: NOT
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testDoubleNegation(self):
     """Treat `not(not(a))` as `a`."""
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value < channel_2.future().value
     not_not_pred = ph.logical_not(ph.logical_not(pred))
     channel_to_key_map = {
@@ -401,7 +557,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                     index_op {
                       expression {
                         placeholder {
-                          key: "channel_1_key"
+                          key: "a_foo"
                         }
                       }
                     }
@@ -418,7 +574,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                     index_op {
                       expression {
                         placeholder {
-                          key: "channel_2_key"
+                          key: "b_bar"
                         }
                       }
                     }
@@ -430,13 +586,23 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: LESS_THAN
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testComparison_notEqual(self):
     """Treat `a != b` as `not(a == b)`."""
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value != channel_2.future().value
     channel_to_key_map = {
         channel_1: 'channel_1_key',
@@ -460,7 +626,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_1_key"
+                                key: "a_foo"
                               }
                             }
                           }
@@ -477,7 +643,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_2_key"
+                                key: "b_bar"
                               }
                             }
                           }
@@ -493,13 +659,23 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: NOT
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testComparison_lessThanOrEqual(self):
     """Treat `a <= b` as `not(a > b)`."""
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value <= channel_2.future().value
     channel_to_key_map = {
         channel_1: 'channel_1_key',
@@ -523,7 +699,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_1_key"
+                                key: "a_foo"
                               }
                             }
                           }
@@ -540,7 +716,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_2_key"
+                                key: "b_bar"
                               }
                             }
                           }
@@ -556,13 +732,23 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: NOT
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testComparison_greaterThanOrEqual(self):
     """Treat `a >= b` as `not(a < b)`."""
-    channel_1 = Channel(type=_MyType)
-    channel_2 = Channel(type=_MyType)
+    channel_1 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='foo',
+    )
+    channel_2 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='bar',
+    )
     pred = channel_1.future().value >= channel_2.future().value
     channel_to_key_map = {
         channel_1: 'channel_1_key',
@@ -586,7 +772,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_1_key"
+                                key: "a_foo"
                               }
                             }
                           }
@@ -603,7 +789,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                           index_op {
                             expression {
                               placeholder {
-                                key: "channel_2_key"
+                                key: "b_bar"
                               }
                             }
                           }
@@ -619,15 +805,37 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: NOT
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
   def testNestedLogicalOps(self):
-    channel_11 = Channel(type=_MyType)
-    channel_12 = Channel(type=_MyType)
-    channel_21 = Channel(type=_MyType)
-    channel_22 = Channel(type=_MyType)
-    channel_3 = Channel(type=_MyType)
+    channel_11 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('a'),
+        output_key='1',
+    )
+    channel_12 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('b'),
+        output_key='2',
+    )
+    channel_21 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('c'),
+        output_key='3',
+    )
+    channel_22 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('d'),
+        output_key='4',
+    )
+    channel_3 = channel.OutputChannel(
+        artifact_type=_MyType,
+        producer_component=test_node.TestNode('e'),
+        output_key='5',
+    )
     pred = ph.logical_or(
         ph.logical_and(channel_11.future().value >= channel_12.future().value,
                        channel_21.future().value < channel_22.future().value),
@@ -664,7 +872,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                                       index_op {
                                         expression {
                                           placeholder {
-                                            key: "channel_11_key"
+                                            key: "a_1"
                                           }
                                         }
                                       }
@@ -681,7 +889,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                                       index_op {
                                         expression {
                                           placeholder {
-                                            key: "channel_12_key"
+                                            key: "b_2"
                                           }
                                         }
                                       }
@@ -709,7 +917,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                                 index_op {
                                   expression {
                                     placeholder {
-                                      key: "channel_21_key"
+                                      key: "c_3"
                                     }
                                   }
                                 }
@@ -726,7 +934,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                                 index_op {
                                   expression {
                                     placeholder {
-                                      key: "channel_22_key"
+                                      key: "d_4"
                                     }
                                   }
                                 }
@@ -757,7 +965,7 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
                                 index_op {
                                   expression {
                                     placeholder {
-                                      key: "channel_3_key"
+                                      key: "e_5"
                                     }
                                   }
                                 }
@@ -782,7 +990,9 @@ class PredicateTest(parameterized.TestCase, tf.test.TestCase):
           op: OR
         }
       }
-    """, placeholder_pb2.PlaceholderExpression())
+    """,
+        placeholder_pb2.PlaceholderExpression(),
+    )
     self.assertProtoEquals(actual_pb, expected_pb)
 
 
