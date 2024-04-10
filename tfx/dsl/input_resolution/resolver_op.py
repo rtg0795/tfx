@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for ResolverOp and its related definitions."""
+
 from __future__ import annotations
 
 import abc
-from typing import Any, Generic, Literal, Mapping, Optional, Sequence, Set, Type, TypeVar, Union
+from typing import Any, Generic, Literal, Mapping, Optional, Sequence, Set, Type, TypeVar, Union, cast
 
 import attr
 from tfx import types
+from tfx.orchestration import mlmd_connection_manager as mlmd_cm
 from tfx.proto.orchestration import pipeline_pb2
 from tfx.utils import json_utils
 from tfx.utils import typing_utils
@@ -28,13 +30,30 @@ import ml_metadata as mlmd
 
 # Mark frozen as context instance may be used across multiple operator
 # invocations.
-@attr.s(auto_attribs=True, frozen=True, kw_only=True)
 class Context:
   """Context for running ResolverOp."""
-  # MetadataStore for MLMD read access.
-  store: mlmd.MetadataStore
-  # TODO(jjong): Add more context such as current pipeline, current pipeline
-  # run, and current running node information.
+
+  def __init__(
+      self,
+      store=mlmd.MetadataStore,
+      mlmd_handle_like: Optional[mlmd_cm.HandleLike] = None,
+  ):
+    self._store = store
+    self._mlmd_handle_like = mlmd_handle_like
+
+  @property
+  def store(self):
+    return self._store
+
+  @property
+  def mlmd_connection_manager(self):
+    if isinstance(self._mlmd_handle_like, mlmd_cm.MLMDConnectionManager):
+      return cast(mlmd_cm.MLMDConnectionManager, self._mlmd_handle_like)
+    else:
+      return None
+
+  # # TODO(jjong): Add more context such as current pipeline, current pipeline
+  # # run, and current running node information.
 
 
 # Note that to use DataType as a generic type parameter (e.g.
